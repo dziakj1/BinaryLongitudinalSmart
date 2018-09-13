@@ -3,7 +3,7 @@
 ***************************************************************/
 * Read the sample dataset;
 PROC IMPORT OUT=DataWideFormat 
-            DATAFILE= "C:\Users\jjd264\Documents\LongitudinalSmart\BinaryAppendix\SimulatedSmartBinaryData.txt" 
+            DATAFILE= "C:\Users\jjd264\Documents\LongitudinalSmart\BinaryPaper\Demonstration\SimulatedSmartBinaryData.txt" 
             DBMS=TAB REPLACE; 
      GETNAMES=YES;
      DATAROW=2; 
@@ -26,7 +26,16 @@ DATA DataLongFormat;
 	Y = Y3;
 	time = 3;
 	OUTPUT;
-	KEEP ID KnownWeight A1 R A2 Y time; 
+	Y = Y4;
+	time = 4;
+	OUTPUT;
+	Y = Y5;
+	time = 5;
+	OUTPUT;
+	Y = Y6;
+	time = 6;
+	OUTPUT;
+	KEEP ID KnownWeight Male BaselineSeverity A1 R A2 Y time; 
 RUN;
 /*****************************************************************************
 * Create "replications.";
@@ -54,7 +63,7 @@ RUN;
 DATA MinusOnePseudodata;
 	SET RowsToReplicate;
 	A2 = -1;
-	wave = time + 3;
+	wave = time + 6;
 RUN;
 DATA DataForAnalysis;
 	SET PlusOnePseudodata MinusOnePseudodata RowsNotToReplicate;
@@ -64,9 +73,8 @@ PROC SORT DATA=DataForAnalysis;
 RUN;
 /* Recode time to take changepoint into account: */
 DATA DataForAnalysis; SET DataForAnalysis;
-	IF time > 1 THEN S1 = 1; ELSE S1 = 0;
-	IF time > 2 THEN S2 = 1; ELSE S2 = 0;
-	* Note that time = S1 + S2 + 1;
+	IF time > 1 THEN S1 = 1.5; ELSE S1 = 0.5; /* time since first randomization */
+	IF time > 2 THEN S2 = time-2; ELSE S2 = 0;  /* time since second randomization */
 RUN;
 
 /***************************************************************
@@ -75,7 +83,7 @@ RUN;
 PROC GENMOD DATA=DataForAnalysis DESCENDING;
 	CLASS ID;
 	ODS OUTPUT GEEEmpPEst=Beta GEERCov=CovBeta;
-	MODEL  Y = S1 S2 S1*A1 S2*A1 S2*A2 S2*A1*A2 / DIST=BINOMIAL LINK=LOGIT;
+	MODEL  Y = Male BaselineSeverity S1 S2 S1*A1 S2*A1 S2*A2 S2*A1*A2 / DIST=BINOMIAL LINK=LOGIT;
 	REPEATED SUBJECT=ID / ECOVB;
 	WEIGHT KnownWeight;
 RUN;
@@ -90,24 +98,36 @@ PROC IML;
 	USE CovBeta;
 		READ ALL INTO CovBeta;
 	CLOSE CovBeta;
-	L_Plus_Plus = {  1  0  0  0  0  0  0,
-                     1  1  0  1  0  0  0,
-                     1  1  1  1  1  1  1 };
-       * This three-by-seven matrix gives the contrast coefficients (multipliers) for;
-	   * the linear combinations of the seven GEE regression coefficients which will;
+	L_Plus_Plus = {   1  1  1  0.5  0  0.5   0   0   0, 
+					  1  1  1  1.5  0  1.5   0   0   0, 
+					  1  1  1  1.5  1  1.5   1   1   1, 
+					  1  1  1  1.5  2  1.5   2   2   2, 
+					  1  1  1  1.5  3  1.5   3   3   3, 
+					  1  1  1  1.5  4  1.5   4   4   4 };
+       * This six-by-nine matrix gives the contrast coefficients (multipliers) for;
+	   * the linear combinations of the nine GEE regression coefficients which will;
 	   * give the inverse logit of the expected probability of Y=1 at each of the ;
-	   * three measurement time points, for the A1=+1, A2=+1 embedded adaptive intervention.;
-    L_Plus_Minus = { 1  0  0  0  0  0  0,
-                     1  1  0  1  0  0  0,
-                     1  1  1  1  1 -1 -1 };
+	   * six measurement time points, for the A1=+1, A2=+1 embedded adaptive intervention.;
+    L_Plus_Minus = {  1  1  1  0.5  0  0.5   0   0   0, 
+					  1  1  1  1.5  0  1.5   0   0   0, 
+					  1  1  1  1.5  1  1.5   1  -1  -1, 
+					  1  1  1  1.5  2  1.5   2  -2  -2, 
+					  1  1  1  1.5  3  1.5   3  -3  -3, 
+					  1  1  1  1.5  4  1.5   4  -4  -4 };
        * L_Plus_Minus is for the A1=+1, A2=-1 embedded adaptive intervention.;
-	L_Minus_Plus = { 1  0  0  0  0  0  0,
-                     1  1  0 -1  0  0  0,
-                     1  1  1 -1 -1  1 -1 };
+	L_Minus_Plus = {  1  1  1  0.5  0  -0.5   0   0   0, 
+					  1  1  1  1.5  0  -1.5   0   0   0, 
+					  1  1  1  1.5  1  -1.5  -1   1  -1,
+					  1  1  1  1.5  2  -1.5  -2   2  -2,
+					  1  1  1  1.5  3  -1.5  -3   3  -3, 
+					  1  1  1  1.5  4  -1.5  -4   4  -4 };
        * L_Minus_Plus is for the A1=-1, A2=+1 embedded adaptive intervention.;
-    L_Minus_Minus = { 1  0  0  0  0  0  0,
-                      1  1  0 -1  0  0  0,
-                      1  1  1 -1 -1 -1  1 };
+    L_Minus_Minus = { 1  1  1  0.5  0  -0.5   0   0   0, 
+					  1  1  1  1.5  0  -1.5   0   0   0, 
+					  1  1  1  1.5  1  -1.5  -1  -1   1, 
+					  1  1  1  1.5  2  -1.5  -2  -2   2, 
+					  1  1  1  1.5  3  -1.5  -3  -3   3, 
+					  1  1  1  1.5  4  -1.5  -4  -4   4 };
        * L_Minus_Minus is for the A1=-1, A2=-1 embedded adaptive intervention.;
 	Eta_Plus_Plus = L_Plus_Plus*beta;
         * vector of fitted inverse-logit probabilities of Y=1 at each time point for (+1,+1);
@@ -125,14 +145,18 @@ PROC IML;
         * vector of fitted probabilities of Y=1 at each time point for (-1,+1);
 	Mu_Minus_Minus = EXP(Eta_Minus_Minus)/(1+EXP(Eta_Minus_Minus));
         * vector of fitted probabilities of Y=1 at each time point for (-1,-1);
-    Estimated_Area_Plus_Plus = {0.5 1.0 0.5}*Mu_Plus_Plus;
-        * Estimated area under the curve for the A1=+1, A2=+1 embedded adaptive intervention;
-	Estimated_Area_Plus_Minus = {0.5 1.0 0.5}*Mu_Plus_Minus;
-        * Estimated area under the curve for the A1=+1, A2=-1 embedded adaptive intervention;
-	Estimated_Area_Minus_Plus = {0.5 1.0 0.5}*Mu_Minus_Plus;
-        * Estimated area under the curve for the A1=-1, A2=+1 embedded adaptive intervention.;
-	Estimated_Area_Minus_Minus = {0.5 1.0 0.5}*Mu_Minus_Minus;
-        * Estimated area under the curve for the A1=-1, A2=-1 embedded adaptive intervention.;
+    Estimated_Area_Plus_Plus = {0.5 1.0 1.0 1.0 1.0 0.5}*Mu_Plus_Plus/5;
+        * Estimated area under the curve for the A1=+1, A2=+1 embedded adaptive intervention,
+	      divided by the length of the time interval.;
+	Estimated_Area_Plus_Minus = {0.5 1.0 1.0 1.0 1.0 0.5}*Mu_Plus_Minus/5;
+        * Estimated area under the curve for the A1=+1, A2=-1 embedded adaptive intervention,
+	      divided by the length of the time interval.;
+	Estimated_Area_Minus_Plus = {0.5 1.0 1.0 1.0 1.0 0.5}*Mu_Minus_Plus/5;
+        * Estimated area under the curve for the A1=-1, A2=+1 embedded adaptive intervention,
+	      divided by the length of the time interval.;
+	Estimated_Area_Minus_Minus = {0.5 1.0 1.0 1.0 1.0 0.5}*Mu_Minus_Minus/5;
+        * Estimated area under the curve for the A1=-1, A2=-1 embedded adaptive intervention,
+	      divided by the length of the time interval.;
 	Estimate_PP_Versus_PM = Estimated_Area_Plus_Plus - Estimated_Area_Plus_Minus; 
         * The estimated difference equals the difference in the estimates;
     Estimate_PP_Versus_MP = Estimated_Area_Plus_Plus - Estimated_Area_Minus_Plus;
@@ -154,15 +178,15 @@ PROC IML;
             "AUC, +- versus -+"  //
             "AUC, +- versus --"  //
             "AUC, -+ versus --" ;
-	Derivatives_PP_versus_PM = {.5 1 .5 -.5 -1 -.5}#(Mu_Plus_Plus  // Mu_Plus_Minus)`#(1-(Mu_Plus_Plus  // Mu_Plus_Minus)`);
+	Derivatives_PP_versus_PM = {.5 1 1 1 1 .5 -.5 -1 -1 -1 -1 -.5}#(Mu_Plus_Plus  // Mu_Plus_Minus)`#(1-(Mu_Plus_Plus  // Mu_Plus_Minus)`)/5;
 	  * These are used in Cramer's delta method for converting the covariance in the 
 	  * GEE coefficients to the variance of a contrast of interest.  # means 
 	  * elementwise (one by one) multiplication.;
-	Derivatives_PP_versus_MP = {.5 1 .5 -.5 -1 -.5}#(Mu_Plus_Plus  // Mu_Minus_Plus)`#(1-(Mu_Plus_Plus  // Mu_Minus_Plus)`);
-	Derivatives_PP_versus_MM = {.5 1 .5 -.5 -1 -.5}#(Mu_Plus_Plus  // Mu_Minus_Minus)`#(1-(Mu_Plus_Plus  // Mu_Minus_Minus)`);
-	Derivatives_PM_versus_MP = {.5 1 .5 -.5 -1 -.5}#(Mu_Plus_Minus // Mu_Minus_Plus)`#(1-(Mu_Plus_Minus // Mu_Minus_Plus)`);
-	Derivatives_PM_versus_MM = {.5 1 .5 -.5 -1 -.5}#(Mu_Plus_Minus // Mu_Minus_Minus)`#(1-(Mu_Plus_Minus // Mu_Minus_Minus)`);
-	Derivatives_MP_versus_MM = {.5 1 .5 -.5 -1 -.5}#(Mu_Minus_Plus // Mu_Minus_Minus)`#(1-(Mu_Minus_Plus // Mu_Minus_Minus)`); 
+	Derivatives_PP_versus_MP = {.5 1 1 1 1 .5 -.5 -1 -1 -1 -1 -.5}#(Mu_Plus_Plus  // Mu_Minus_Plus)`#(1-(Mu_Plus_Plus  // Mu_Minus_Plus)`)/5;
+	Derivatives_PP_versus_MM = {.5 1 1 1 1 .5 -.5 -1 -1 -1 -1 -.5}#(Mu_Plus_Plus  // Mu_Minus_Minus)`#(1-(Mu_Plus_Plus  // Mu_Minus_Minus)`)/5;
+	Derivatives_PM_versus_MP = {.5 1 1 1 1 .5 -.5 -1 -1 -1 -1 -.5}#(Mu_Plus_Minus // Mu_Minus_Plus)`#(1-(Mu_Plus_Minus // Mu_Minus_Plus)`)/5;
+	Derivatives_PM_versus_MM = {.5 1 1 1 1 .5 -.5 -1 -1 -1 -1 -.5}#(Mu_Plus_Minus // Mu_Minus_Minus)`#(1-(Mu_Plus_Minus // Mu_Minus_Minus)`)/5;
+	Derivatives_MP_versus_MM = {.5 1 1 1 1 .5 -.5 -1 -1 -1 -1 -.5}#(Mu_Minus_Plus // Mu_Minus_Minus)`#(1-(Mu_Minus_Plus // Mu_Minus_Minus)`)/5; 
 	Multipliers_PP_Versus_PM = L_Plus_Plus  // L_Plus_Minus;
 	Multipliers_PP_Versus_MP = L_Plus_Plus  // L_Minus_Plus;
 	Multipliers_PP_Versus_MM = L_Plus_Plus  // L_Minus_Minus;

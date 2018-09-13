@@ -24,7 +24,7 @@ DataWideFormat$KnownWeight <- DataWideFormat$KnownWeight1 * DataWideFormat$Known
 ################################################################
 # Estimate Stage 1 weight:
 DataWideFormat$A1DummyCoded <- 0*(DataWideFormat$A1==-1)+1*(DataWideFormat$A1==+1);
-logisticModel1 <- glm(formula=A1DummyCoded ~  Y1,    
+logisticModel1 <- glm(formula=A1DummyCoded ~  Male + BaselineSeverity,    
                            # You could include baseline covariates in this formula if 
                            # they may be relevant.
 					family=binomial,
@@ -36,7 +36,7 @@ DataWideFormat$EstimatedWeight1 <- DataWideFormat$A1DummyCoded/DataWideFormat$p1
 DataWideFormat$A2DummyCoded <- 0*(DataWideFormat$A2==-1)+1*(DataWideFormat$A2==+1);
 DataWideFormat$A2DummyCoded[which(DataWideFormat$R==1)] <- NA;
 # responders were not re-randomized, so A2 is neither -1 nor +1;
-logisticModel2 <- glm(formula=A2DummyCoded ~  Y1 + Y2,  
+logisticModel2 <- glm(formula=A2DummyCoded ~  Y1 + Male + BaselineSeverity,  
 					           # You could include baseline covariates or other aspects of treatment history
 					           # in this formula if they may be relevant.   However, you cannot include 
 					           # response status R as a predictor of A2, because A2 only has variance if R=0.
@@ -69,12 +69,12 @@ DataWideFormat$WeightsUsed <- DataWideFormat$EstimatedWeight;
 ################################################################
 # Translate wide-format dataset into a long-format dataset;
 ################################################################
-nwaves <- 3; 
+nwaves <- 6; 
 DataLongFormat <- reshape(DataWideFormat, 
-                          varying = c("Y1", "Y2", "Y3"), 
+                          varying = c("Y1", "Y2", "Y3", "Y4", "Y5", "Y6"), 
                           v.names = "Y",
                           timevar = "time", 
-                          times = c(1, 2, 3), 
+                          times = 1:6, 
                           new.row.names = 1:(nwaves*nrow(DataWideFormat)),
                           direction = "long");
 
@@ -107,18 +107,19 @@ MinusOnePseudodata$wave <- MinusOnePseudodata$time + nwaves;
 DataForAnalysis <- rbind(PlusOnePseudodata, MinusOnePseudodata, RowsNotToReplicate);
 DataForAnalysis <- DataForAnalysis[order(DataForAnalysis$id,DataForAnalysis$wave),] 
 # This sorts by the variables id and wave
-DataForAnalysis$S1 <- 1*(DataForAnalysis$time>1);  
-# that is, if time > 1 then S1 <- 1; otherwise S1 = 0;
-DataForAnalysis$S2 <- 1*(DataForAnalysis$time>2);  
-# that is, if time > 2 then S2 <- 1; otherwise S2 = 0;
-# Note that time = S1 + S2 + 1;
+DataForAnalysis$S1 <- 0.5 + 1*(DataForAnalysis$time>1);  # time since first randomization;
+# that is, if time > 1 then S1 <- 1.5; otherwise S1 = 0.5;
+DataForAnalysis$S2 <- pmax(0,DataForAnalysis$time-2);   # time since second randomization;
+# that is, if time > 2 then S2 <- time-2; otherwise S2 = 0; 
 
 
 ################################################################
 # Do a GEE analysis approach with independent working correlation structure:
 ################################################################
-formula1 <- Y ~ S1 + S2 + S1:A1 +  S2:A1 + S2:A2 + S2:A1:A2;
-GeeIndependent <- geeglm(formula = formula1,  
+GeeModelFormula <-  Y ~ Male + BaselineSeverity +
+  S1 + S2 + S1:A1 + S2:A1 + S2:A2 + 
+  S2:A1:A2 ;
+GeeIndependent <- geeglm(formula = GeeModelFormula,  
                          family=binomial,
                          id=id,
                          weights = WeightsUsed,    
@@ -206,7 +207,7 @@ BlockStructureWorkingCorrelation <- rbind(cbind(ExchangeableWorkingCorrelation,
 WorkingCorrelationInGeepackFormat <- fixed2Zcor(cor.fixed=BlockStructureWorkingCorrelation, 
                                                 id=DataForAnalysis$id,  
                                                 waves=DataForAnalysis$wave); 
-GeeExchangeable <- geeglm(formula = formula1,  
+GeeExchangeable <- geeglm(formula = GeeModelFormula,  
                           id=id,  
                           family=binomial,
                           weights = WeightsUsed,
@@ -249,7 +250,7 @@ BlockStructureWorkingCorrelation <- rbind(cbind(AR1WorkingCorrelation,0*AR1Worki
 WorkingCorrelationInGeepackFormat <- fixed2Zcor(cor.fixed=BlockStructureWorkingCorrelation, 
                                                 id=DataForAnalysis$id,  
                                                 waves=DataForAnalysis$wave); 
-GeeAR1 <- geeglm(formula = formula1,  
+GeeAR1 <- geeglm(formula = GeeModelFormula,  
                  id=id,  
                  family=binomial,
                  weights = WeightsUsed,
@@ -283,16 +284,18 @@ CovBeta <- GeeFinal$geese$vbeta;
 # estimated weights.;
 ################################################################
 nsub <- nrow(DataWideFormat);
-PredictorsLogistic1 =  DataWideFormat$Y0; 
-PredictorsLogistic2 = cbind( DataWideFormat$Y0,
-                             DataWideFormat$Y1); 
+PredictorsLogistic1 =  cbind(DataWideFormat$Male, DataWideFormat$BaselineSeverity); 
+PredictorsLogistic2 = cbind( DataWideFormat$Y1,
+                             DataWideFormat$Male, DataWideFormat$BaselineSeverity); 
 scoreAlpha1 <- cbind(1,PredictorsLogistic1) * (DataWideFormat$A1DummyCoded - DataWideFormat$p1);
 residuals2 <- DataWideFormat$A2DummyCoded - DataWideFormat$p2;
 residuals2[which(is.na(residuals2))] <- 0;  # This excludes the responders from the model for stage 2;
 scoreAlpha2 <- cbind(1,PredictorsLogistic2) * residuals2; 
 # Step 3: Finish calculating the standard errors.
 # This is done with the replicated data. 
-predictors <- cbind(DataForAnalysis$S1,
+predictors <- cbind(DataForAnalysis$Male,
+                    DataForAnalysis$BaselineSeverity,
+                    DataForAnalysis$S1,
                     DataForAnalysis$S2,
                     DataForAnalysis$S1*DataForAnalysis$A1,
                     DataForAnalysis$S2*DataForAnalysis$A1,
@@ -327,9 +330,7 @@ for (i in 1:nsub) {
   indicesThisSubject <- indicesNextSubject;
   weightThisSubject <- DataForAnalysis$KnownWeight[indicesThisSubject[1]];
   # The weights are the same for all observations within the 
-  # subject, so we just read the first one.
-  # I'm following Xi Lu's code in using the known weight here instead of the 
-  # estimated weight.  I am not sure why she does this.
+  # subject, so we just read the first one. 
   residualsThisSubject <- resid[indicesThisSubject];
   predictorsThisSubject <- predictors[indicesThisSubject,] ;  
   fittedValuesThisSubject <- fitted[indicesThisSubject];
@@ -414,24 +415,40 @@ CovBeta <- (1/nsub)* invJ %*% matrixIAdjusted %*% invJ;
 # Now that we have beta and CovBeta, we can calculate the estimands of interest,
 # such as contrasts between areas under the curve.
 ################################################################
-L.plus.plus   <- rbind(c( 1, 0, 0, 0, 0, 0, 0),
-                       c( 1, 1, 0, 1, 0, 0, 0),
-                       c( 1, 1, 1, 1, 1, 1, 1));
-  # This three-by-seven matrix gives the contrast coefficients (multipliers) for
-  # the linear combinations of the seven GEE regression coefficients which will
+L.plus.plus   <- matrix(c(
+  1, 1, 1, 0.5, 0, +0.5,  0,  0,  0,
+  1, 1, 1, 1.5, 0, +1.5,  0,  0,  0,
+  1, 1, 1, 1.5, 1, +1.5, +1, +1, +1,
+  1, 1, 1, 1.5, 2, +1.5, +2, +2, +2,
+  1, 1, 1, 1.5, 3, +1.5, +3, +3, +3,
+  1, 1, 1, 1.5, 4, +1.5, +4, +4, +4), nrow=6, byrow=TRUE);
+  # This six-by-nine matrix gives the contrast coefficients (multipliers) for
+  # the linear combinations of the nine GEE regression coefficients which will
   # give the inverse logit of the expected probability of Y=1 at each of the 
-  # three measurement time points, for the A1=+1, A2=+1 embedded adaptive intervention.
-L.plus.minus  <- rbind(c( 1, 0, 0, 0, 0, 0, 0),
-                       c( 1, 1, 0, 1, 0, 0, 0),
-                       c( 1, 1, 1, 1, 1,-1,-1));
+  # six measurement time points, for the A1=+1, A2=+1 embedded adaptive intervention.
+L.plus.minus  <- matrix(c(
+  1, 1, 1, 0.5, 0, +0.5,  0,  0,  0,
+  1, 1, 1, 1.5, 0, +1.5,  0,  0,  0,
+  1, 1, 1, 1.5, 1, +1.5, +1, -1, -1,
+  1, 1, 1, 1.5, 2, +1.5, +2, -2, -2,
+  1, 1, 1, 1.5, 3, +1.5, +3, -3, -3,
+  1, 1, 1, 1.5, 4, +1.5, +4, -4, -4),nrow=6,byrow=TRUE);
   # This matrix is for the A1=+1, A2=-1 embedded adaptive intervention.
-L.minus.plus  <- rbind(c( 1, 0, 0, 0, 0, 0, 0),
-                       c( 1, 1, 0,-1, 0, 0, 0),
-                       c( 1, 1, 1,-1,-1, 1,-1));
+L.minus.plus  <- matrix(c(
+  1, 1, 1, 0.5, 0, -0.5,  0,  0,  0,
+  1, 1, 1, 1.5, 0, -1.5,  0,  0,  0,
+  1, 1, 1, 1.5, 1, -1.5, -1, +1, -1,
+  1, 1, 1, 1.5, 2, -1.5, -2, +2, -2,
+  1, 1, 1, 1.5, 3, -1.5, -3, +3, -3,
+  1, 1, 1, 1.5, 4, -1.5, -4, +4, -4),nrow=6,byrow=TRUE);
   # This matrix is for the A1=-1, A2=+1 embedded adaptive intervention.
-L.minus.minus <- rbind(c( 1, 0, 0, 0, 0, 0, 0),
-                       c( 1, 1, 0,-1, 0, 0, 0),
-                       c( 1, 1, 1,-1,-1,-1, 1));
+L.minus.minus <- matrix(c(
+  1, 1, 1, 0.5, 0, -0.5,  0,  0,  0,
+  1, 1, 1, 1.5, 0, -1.5,  0,  0,  0,
+  1, 1, 1, 1.5, 1, -1.5, -1, -1, +1,
+  1, 1, 1, 1.5, 2, -1.5, -2, -2, +2,
+  1, 1, 1, 1.5, 3, -1.5, -3, -3, +3,
+  1, 1, 1, 1.5, 4, -1.5, -4, -4, +4), nrow=6, byrow=TRUE);
   # This matrix is for the A1=-1, A2=-1 embedded adaptive intervention.
 eta.plus.plus <- as.vector(L.plus.plus%*%beta);  
   # vector of fitted inverse-logit probabilities of Y=1 at each time point for (+1,+1);
@@ -449,14 +466,18 @@ mu.minus.plus <- exp(eta.minus.plus)/(1+exp(eta.minus.plus));
   # vector of fitted probabilities of Y=1 at each time point for (-1,+1);
 mu.minus.minus <- exp(eta.minus.minus)/(1+exp(eta.minus.minus));
   # vector of fitted probabilities of Y=1 at each time point for (-1,-1);
-estimated.area.plus.plus <- sum(c(0.5,1.0,0.5)*mu.plus.plus);
-  # Estimated area under the curve for the A1=+1, A2=+1 embedded adaptive intervention.
-estimated.area.plus.minus <- sum(c(0.5,1.0,0.5)*mu.plus.minus);
-  # Estimated area under the curve for the A1=+1, A2=-1 embedded adaptive intervention.
-estimated.area.minus.plus <- sum(c(0.5,1.0,0.5)*mu.minus.plus);
-  # Estimated area under the curve for the A1=-1, A2=+1 embedded adaptive intervention.
-estimated.area.minus.minus <- sum(c(0.5,1.0,0.5)*mu.minus.minus);
-  # Estimated area under the curve for the A1=-1, A2=-1 embedded adaptive intervention.
+estimated.area.plus.plus <- sum((1/5)*c(0.5,1,1,1,1,0.5)*mu.plus.plus);
+# Estimated area under the curve for the A1=+1, A2=+1 embedded adaptive intervention,
+# divided by the length of the time interval.
+estimated.area.plus.minus <- sum((1/5)*c(0.5,1,1,1,1,0.5)*mu.plus.minus);
+# Estimated area under the curve for the A1=+1, A2=-1 embedded adaptive intervention,
+# divided by the length of the time interval.
+estimated.area.minus.plus <- sum((1/5)*c(0.5,1,1,1,1,0.5)*mu.minus.plus);
+# Estimated area under the curve for the A1=-1, A2=+1 embedded adaptive intervention,
+# divided by the length of the time interval.
+estimated.area.minus.minus <- sum((1/5)*c(0.5,1,1,1,1,0.5)*mu.minus.minus);
+# Estimated area under the curve for the A1=-1, A2=-1 embedded adaptive intervention,
+# divided by the length of the time interval.
 estimate.pp.versus.pm <- estimated.area.plus.plus-estimated.area.plus.minus;
   # The estimated difference equals the difference in the estimates;
 estimate.pp.versus.mp <- estimated.area.plus.plus-estimated.area.minus.plus;
@@ -478,14 +499,14 @@ names(estimated.values.for.contrasts) <- c("AUC, ++ versus +-",
                                            "AUC, +- versus -+",
                                            "AUC, +- versus --",
                                            "AUC, -+ versus --");
-derivatives.pp.versus.pm <- c(.5,1,.5,-.5,-1,-.5)*c(mu.plus.plus, mu.plus.minus)*(1-c(mu.plus.plus, mu.plus.minus));
+derivatives.pp.versus.pm <- (1/5)*c(.5,1,1,1,1,.5,-.5,-1,-1,-1,-1,-.5)*c(mu.plus.plus, mu.plus.minus)*(1-c(mu.plus.plus, mu.plus.minus));
   # These are used in Cramer's delta method for converting the covariance in the 
   # GEE coefficients to the variance of a contrast of interest.;
-derivatives.pp.versus.mp <- c(.5,1,.5,-.5,-1,-.5)*c(mu.plus.plus, mu.minus.plus)*(1-c(mu.plus.plus, mu.minus.plus));
-derivatives.pp.versus.mm <- c(.5,1,.5,-.5,-1,-.5)*c(mu.plus.plus, mu.minus.minus)*(1-c(mu.plus.plus, mu.minus.minus));
-derivatives.pm.versus.mp <- c(.5,1,.5,-.5,-1,-.5)*c(mu.plus.minus,mu.minus.plus)*(1-c(mu.plus.minus,mu.minus.plus));
-derivatives.pm.versus.mm <- c(.5,1,.5,-.5,-1,-.5)*c(mu.plus.minus,mu.minus.minus)*(1-c(mu.plus.minus,mu.minus.minus));
-derivatives.mp.versus.mm <- c(.5,1,.5,-.5,-1,-.5)*c(mu.minus.plus,mu.minus.minus)*(1-c(mu.minus.plus,mu.minus.minus));
+derivatives.pp.versus.mp <- (1/5)*c(.5,1,1,1,1,.5,-.5,-1,-1,-1,-1,-.5)*c(mu.plus.plus, mu.minus.plus)*(1-c(mu.plus.plus, mu.minus.plus));
+derivatives.pp.versus.mm <- (1/5)*c(.5,1,1,1,1,.5,-.5,-1,-1,-1,-1,-.5)*c(mu.plus.plus, mu.minus.minus)*(1-c(mu.plus.plus, mu.minus.minus));
+derivatives.pm.versus.mp <- (1/5)*c(.5,1,1,1,1,.5,-.5,-1,-1,-1,-1,-.5)*c(mu.plus.minus,mu.minus.plus)*(1-c(mu.plus.minus,mu.minus.plus));
+derivatives.pm.versus.mm <- (1/5)*c(.5,1,1,1,1,.5,-.5,-1,-1,-1,-1,-.5)*c(mu.plus.minus,mu.minus.minus)*(1-c(mu.plus.minus,mu.minus.minus));
+derivatives.mp.versus.mm <- (1/5)*c(.5,1,1,1,1,.5,-.5,-1,-1,-1,-1,-.5)*c(mu.minus.plus,mu.minus.minus)*(1-c(mu.minus.plus,mu.minus.minus));
 multipliers.pp.versus.pm <- rbind(L.plus.plus, L.plus.minus);
 multipliers.pp.versus.mp <- rbind(L.plus.plus, L.minus.plus);
 multipliers.pp.versus.mm <- rbind(L.plus.plus, L.minus.minus);
@@ -540,4 +561,3 @@ print(round(cbind(estimated.values.for.contrasts,
             standard.errors.for.contrasts,
             z.ratios.for.contrasts,
             p.values.for.contrasts),4));
- 
